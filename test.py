@@ -3,7 +3,60 @@ import json
 import re
 from datetime import date
 
-import pprint
+from influxdb import SeriesHelper
+from influxdb import InfluxDBClient
+from influxdb.exceptions import InfluxDBClientError
+
+
+myClient = InfluxDBClient(database='testmarket')
+
+
+def byteify(input_str):
+    if isinstance(input_str, dict):
+        return {byteify(key): byteify(value) for key, value in input_str.iteritems()}
+    elif isinstance(input_str, list):
+        return [byteify(element) for element in input_str]
+    elif isinstance(input_str, unicode):
+        return input_str.encode('utf-8')
+    else:
+        return input_str
+
+
+def fix_output(json_to_fix):
+    first_pass = re.sub('(\w+:)(\d+\.?\d*)', r'\1"\2"', json_to_fix)
+    second_pass = re.sub('(\w+):', r'"\1":', first_pass)
+    return second_pass
+
+
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def return_as_number(s):
+    if is_number(s):
+        return float(s)
+    else:
+        return 0.00
+
+
+class StockSeries(SeriesHelper):
+    class Meta:
+        client = myClient
+        series_name = 'stock.{stock_symbol}'
+        fields = ['price']
+        tags = ['stock_symbol']
+
+
+class OptionSeries(SeriesHelper):
+    class Meta:
+        client = myClient
+        series_name = 'stock.{stock_symbol}.{option_type}'
+        fields = ['ask', 'bid', 'price', 'volume']
+        tags = ['stock_symbol', 'option_id', 'expiry_date', 'strike', 'option_type']
 
 
 class StockOptionPosition:
@@ -11,17 +64,47 @@ class StockOptionPosition:
                  open_interest, price, option_code, strike, volume):
         self.symbol = symbol
         self.positionType = position_type
-        self.ask = ask
-        self.bid = bid
+        self.ask = return_as_number(ask)
+        self.bid = return_as_number(bid)
         self.change = change
         self.cid = cid
         self.changeDir = change_dir
         self.expiryDate = expiry_date
         self.openInterest = open_interest
-        self.price = price
+        self.price = return_as_number(price)
         self.optionCode = option_code
-        self.strike = strike
-        self.volume = volume
+        self.strike = return_as_number(strike)
+        self.volume = int(return_as_number(volume))
+
+    def get_symbol(self):
+        return self.symbol
+
+    def get_type(self):
+        return self.positionType
+
+    def get_ask(self):
+        return self.ask
+
+    def get_bid(self):
+        return self.bid
+
+    def get_expiry_date(self):
+        return self.expiryDate
+
+    def get_expiry_date_formatted(self):
+        return self.expiryDate.strftime('%Y-%m-%d')
+
+    def get_price(self):
+        return self.price
+
+    def get_option_code(self):
+        return self.optionCode
+
+    def get_strike_price(self):
+        return self.strike
+
+    def get_volume(self):
+        return self.volume
 
 
 class StockOption:
@@ -69,51 +152,78 @@ class StockOption:
     def get_puts_count(self):
         return len(self.puts)
 
+    def get_calls(self):
+        return self.calls
 
-def fix_output(json_to_fix):
-    first_pass = re.sub('(\w+:)(\d+\.?\d*)', r'\1"\2"', json_to_fix)
-    second_pass = re.sub('(\w+):', r'"\1":', first_pass)
-    return second_pass
-
-
-def byteify(input_str):
-    if isinstance(input_str, dict):
-        return {byteify(key): byteify(value) for key, value in input_str.iteritems()}
-    elif isinstance(input_str, list):
-        return [byteify(element) for element in input_str]
-    elif isinstance(input_str, unicode):
-        return input_str.encode('utf-8')
-    else:
-        return input_str
+    def get_puts(self):
+        return self.puts
 
 
-def get_option_expiry_dates(symbol):
-    url = "http://www.google.com/finance/option_chain?q=%s&output=json" % symbol
-    raw_data = fix_output(urllib2.urlopen(url).read())
-    option_dates = byteify(json.loads(raw_data))
+class Stock:
+    def __init__(self, symbol):
+        self.symbol = symbol
+        self.options = []
+        self.price = 0.00
 
-    options = []
-    for expiry in option_dates['expirations']:
-        options.append(StockOption(symbol, expiry['d'], expiry['m'], expiry['y']))
+        url = "http://www.google.com/finance/option_chain?q=%s&output=json" % symbol
+        raw_data = fix_output(urllib2.urlopen(url).read())
+        option_dates = byteify(json.loads(raw_data))
 
-    return options
+        for expiry in option_dates['expirations']:
+            self.options.append(StockOption(self.symbol, expiry['d'], expiry['m'], expiry['y']))
+
+        if 'underlying_price' in option_dates:
+            self.price = return_as_number(option_dates['underlying_price'])
+
+        for option in self.options:
+            option.download_prices()
+
+    def get_symbol(self):
+        return self.symbol
+
+    def get_options(self):
+        return self.options
+
+    def get_price(self):
+        return self.price
 
 
 def main():
-    all_options = dict()
-    all_options['AAPL'] = []
+    print "Downloading stock prices and options..."
+    all_stocks = list()
+    all_stocks.append(Stock('AAPL'))
+    all_stocks.append(Stock('FB'))
 
-    for symbol in all_options:
-        all_options[symbol] = get_option_expiry_dates(symbol)
-        for option in all_options[symbol]:
-            print "Downloading prices for %s, expiry %s" % (symbol, option.get_date())
-            option.download_prices()
-
-    for symbol, options in all_options.iteritems():
+    for stock in all_stocks:
+        print "%s: current price = %s" % (stock.get_symbol(), stock.get_price())
+        StockSeries(stock_symbol=stock.get_symbol(), price=stock.get_price())
+        options = stock.get_options()
         for option in options:
-            print "%s: %s - # calls: %s, # puts: %s" % (symbol, option.get_date_formatted(),
+            print "%s: %s - # calls: %s, # puts: %s" % (stock.get_symbol(), option.get_date_formatted(),
                                                         option.get_calls_count(), option.get_puts_count())
+            option_calls = option.get_calls()
+            for option_call in option_calls:
+                OptionSeries(stock_symbol=option_call.get_symbol(), option_type=option_call.get_type(),
+                             option_id=option_call.get_option_code(), expiry_date=option_call.get_expiry_date_formatted(),
+                             strike=option_call.get_strike_price(), ask=option_call.get_ask(), bid=option_call.get_bid(),
+                             price=option_call.get_price(), volume=option_call.get_volume())
 
+            option_puts = option.get_puts()
+            for option_put in option_puts:
+                OptionSeries(stock_symbol=option_put.get_symbol(), option_type=option_put.get_type(),
+                             option_id=option_put.get_option_code(), expiry_date=option_put.get_expiry_date_formatted(),
+                             strike=option_put.get_strike_price(), ask=option_put.get_ask(), bid=option_put.get_bid(),
+                             price=option_put.get_price(), volume=option_put.get_volume())
+
+    try:
+        print "Writing to InfluxDB"
+        StockSeries.commit()
+        OptionSeries.commit()
+        print "Done"
+    except InfluxDBClientError:
+        print StockSeries._json_body_()
+        print OptionSeries._json_body_()
+        raise
 
 if __name__ == "__main__" :
     main()
