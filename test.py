@@ -193,6 +193,11 @@ def main():
     all_stocks = list()
     all_stocks.append(Stock('AAPL'))
     all_stocks.append(Stock('FB'))
+    all_stocks.append(Stock('V'))
+    all_stocks.append(Stock('MSFT'))
+    all_stocks.append(Stock('TWTR'))
+    all_stocks.append(Stock('VXT'))
+    all_stocks.append(Stock('TSLA'))
 
     for stock in all_stocks:
         print "%s: current price = %s" % (stock.get_symbol(), stock.get_price())
