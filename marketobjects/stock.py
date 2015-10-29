@@ -73,11 +73,11 @@ class StockOption:
         return self.expiryDate.strftime('%Y-%m-%d %H:%M:%S.000')
 
     def get_symbol(self):
-        return self.parent.get_symbol()
+        return self.parent_stock.get_symbol()
 
     def download_prices(self):
         url = "http://www.google.com/finance/option_chain?q=%s&expd=%d&expm=%d&expy=%d&output=json" % \
-              (self.parent.get_symbol_for_url(), self.expiryDay, self.expiryMonth, self.expiryYear)
+              (self.parent_stock.get_symbol_for_url(), self.expiryDay, self.expiryMonth, self.expiryYear)
         raw_data = fix_output(urllib2.urlopen(url).read())
         option_data = byteify(json.loads(raw_data))
         self.calls = self._get_prices('call', option_data)
