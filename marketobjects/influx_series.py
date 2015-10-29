@@ -28,10 +28,10 @@ def process_stock_list(client, stocks):
                              price=option_put.get_price(), volume=option_put.get_volume())
 
     try:
-        logger.log("Writing to InfluxDB")
+        logger.info("Writing to InfluxDB")
         StockSeries.commit(client)
         OptionSeries.commit(client)
-        logger.log("Done")
+        logger.info("Done")
     except InfluxDBClientError:
         logger.error(StockSeries._json_body_())
         logger.error(OptionSeries._json_body_())

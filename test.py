@@ -47,7 +47,7 @@ def make_stock_objects():
 def main():
     setup_logging()
     client = InfluxDBClient(database='testmarket')
-    logger.log("Downloading stock prices and options")
+    logger.info("Downloading stock prices and options")
     all_stocks = make_stock_objects()
     process_stock_list(client, all_stocks)
 
